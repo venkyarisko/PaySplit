@@ -23,6 +23,7 @@
   --card-bg: #f9f9f9;
   --shadow: rgba(0, 0, 0, 0.05);
   --modal-overlay: rgba(0, 0, 0, 0.4);
+  --accent: #22c55e;
 
   color: var(--text-main);
   background-color: var(--bg-container);
@@ -48,6 +49,7 @@
   --card-bg: #1e1e1e;
   --shadow: rgba(0, 0, 0, 0.3);
   --modal-overlay: rgba(0, 0, 0, 0.7);
+  --accent: #22c55e;
 }
 
 body {
@@ -287,3 +289,10 @@ input:focus {
   }
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 1s linear infinite;
+}

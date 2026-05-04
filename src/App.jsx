@@ -25,6 +25,8 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { FileOpener } from '@capacitor-community/file-opener';
 
 // --- UTILS ---
 const calculateDebts = (history) => {
@@ -124,7 +126,7 @@ const formatIDR = (val) => new Intl.NumberFormat('id-ID', { style: 'currency', c
 
 // --- MAIN APP ---
 export default function App() {
-  const APP_VERSION = "1.2.1";
+  const APP_VERSION = "1.2.2";
   const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/venkyarisko/PaySplit/main";
   const GITHUB_RELEASE_URL = "https://github.com/venkyarisko/PaySplit/releases/latest";
 
@@ -175,6 +177,8 @@ export default function App() {
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [billPayerId, setBillPayerId] = useState(null);
   const [showManualTaxSettings, setShowManualTaxSettings] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
 
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('darkMode');
@@ -226,6 +230,33 @@ export default function App() {
     }
   }, [showSettings, tempAccount]);
 
+  // Cleanup old updates on startup
+  useEffect(() => {
+    cleanupOldUpdates();
+  }, []);
+
+  const cleanupOldUpdates = async () => {
+    try {
+      const result = await Filesystem.readdir({
+        path: '',
+        directory: Directory.External
+      });
+
+      for (const file of result.files) {
+        if (file.name.startsWith('PaySplit_') && file.name.endsWith('.apk')) {
+          await Filesystem.deleteFile({
+            path: file.name,
+            directory: Directory.External
+          });
+          console.log(`Deleted old update file: ${file.name}`);
+        }
+      }
+    } catch (err) {
+      // Ignore errors if directory is empty or inaccessible
+      console.log("No old updates to cleanup");
+    }
+  };
+
   const checkUpdate = async (manual = true) => {
     try {
       const response = await fetch(`${GITHUB_RAW_BASE}/public/version.json?t=${Date.now()}`);
@@ -238,7 +269,7 @@ export default function App() {
       if (!response.ok) throw new Error("Network response was not ok");
 
       const data = await response.json();
-      
+
       // Fungsi sederhana untuk membandingkan versi (misal: 1.2.1 vs 1.2.0)
       const isNewer = (remote, local) => {
         const r = remote.split('.').map(Number);
@@ -256,9 +287,9 @@ export default function App() {
         // Munculkan Modal Konfirmasi jika ada update
         showConfirm(
           "Update Tersedia! 🚀",
-          `VERSI baru ${data.version} sudah rilis.\n\nCatatan: ${data.notes || 'Peningkatan performa dan fitur baru.'}\n\nMau download sekarang?`,
-          () => window.open(GITHUB_RELEASE_URL, '_blank'),
-          "Download Sekarang",
+          `VERSI baru ${data.version} sudah rilis.\n\nCatatan: ${data.notes || 'Peningkatan performa dan fitur baru.'}\n\nMau download & install sekarang?`,
+          () => downloadAndInstallUpdate(data.version),
+          "Download & Install",
           null,
           "",
           "success"
@@ -269,6 +300,52 @@ export default function App() {
     } catch (err) {
       console.error("Update check error:", err);
       if (manual) showToast("Gagal mengecek update ⚠️");
+    }
+  };
+
+  const downloadAndInstallUpdate = async (version) => {
+    try {
+      setIsDownloading(true);
+      setDownloadProgress(0);
+      showToast("Memulai download update... 📥");
+
+      const tag = `v${version}`;
+      // URL langsung ke file PaySplit.apk di GitHub Release
+      const downloadUrl = `https://github.com/venkyarisko/PaySplit/releases/download/${tag}/PaySplit.apk`;
+      const fileName = `PaySplit_${version}.apk`;
+
+      // Hapus sisa download sebelumnya jika ada dengan nama yang sama
+      try {
+        await Filesystem.deleteFile({
+          path: fileName,
+          directory: Directory.External
+        });
+      } catch (e) {
+        // Abaikan jika file tidak ada
+      }
+
+      // Gunakan Filesystem untuk download langsung ke penyimpanan perangkat
+      // Catatan: downloadFile memberikan performa lebih baik untuk file besar
+      const downloadResult = await Filesystem.downloadFile({
+        url: downloadUrl,
+        path: fileName,
+        directory: Directory.External,
+        progress: true
+      });
+
+      setIsDownloading(false);
+      showToast("Download selesai! Membuka installer... 📦");
+
+      // Membuka file APK yang sudah didownload untuk diinstal
+      await FileOpener.open({
+        filePath: downloadResult.path,
+        contentType: 'application/vnd.android.package-archive'
+      });
+
+    } catch (err) {
+      console.error("Download error:", err);
+      showToast("Gagal mendownload atau menginstall update ❌");
+      setIsDownloading(false);
     }
   };
 
@@ -1471,7 +1548,7 @@ export default function App() {
               </div>
 
               <div style={{ width: '100%', marginTop: 'auto' }}>
-                {updateAvailable ? (
+                {updateAvailable && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -1495,16 +1572,6 @@ export default function App() {
                     </div>
                     <div style={{ background: '#22c55e', color: 'white', padding: '6px 12px', borderRadius: '10px', fontSize: '11px', fontWeight: 800 }}>Download</div>
                   </motion.div>
-                ) : (
-                  <div
-                    style={{
-                      marginBottom: '32px',
-                      textAlign: 'center',
-                      width: '100%'
-                    }}
-                  >
-                    <span style={{ opacity: 0.6, fontWeight: 600, letterSpacing: '0.8px', fontSize: '10px', color: 'var(--text-muted)' }}>VENKY ARISKO • VERSI {APP_VERSION}</span>
-                  </div>
                 )}
                 <button className="btn-primary" onClick={nextStep} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
                   Mulai Patungan <Plus size={20} />
@@ -1512,10 +1579,20 @@ export default function App() {
                 <button
                   className="btn-secondary"
                   onClick={() => setShowSettings(true)}
-                  style={{ border: 'none', background: 'transparent', color: '#999', fontSize: '14px', fontWeight: 500, marginTop: 0 }}
+                  style={{ border: 'none', background: 'transparent', color: '#999', fontSize: '14px', fontWeight: 500, marginTop: 0, marginBottom: '20px' }}
                 >
                   Atur Metode Pembayaran
                 </button>
+
+                <div
+                  style={{
+                    textAlign: 'center',
+                    width: '100%',
+                    opacity: 0.8
+                  }}
+                >
+                  <span style={{ fontWeight: 600, letterSpacing: '1px', fontSize: '10px', color: 'var(--text-main)' }}>VENKY ARISKO • VERSI {APP_VERSION}</span>
+                </div>
               </div>
             </motion.div>
           )}
@@ -3674,6 +3751,49 @@ export default function App() {
               >
                 OK
               </button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+      {/* Download Progress Overlay */}
+      <AnimatePresence>
+        {isDownloading && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              style={{
+                position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+                background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(15px)', zIndex: 30000,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                padding: '30px'
+              }}
+            >
+              <div style={{ position: 'relative', width: '120px', height: '120px', marginBottom: '30px' }}>
+                {/* Spinning outer ring */}
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  style={{
+                    position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                    borderRadius: '50%', border: '4px solid rgba(255,255,255,0.1)',
+                    borderTop: '4px solid var(--accent)'
+                  }}
+                />
+                <div style={{
+                  position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '24px', fontWeight: 900, color: 'white'
+                }}>
+                  <RefreshCw className="animate-spin" size={40} />
+                </div>
+              </div>
+
+              <h3 style={{ color: 'white', margin: '0 0 10px 0', fontSize: '20px', fontWeight: 800 }}>Mendownload Update</h3>
+              <p style={{ color: 'rgba(255,255,255,0.6)', margin: 0, fontSize: '14px', textAlign: 'center' }}>
+                Jangan tutup aplikasi sampai proses selesai...
+              </p>
             </motion.div>
           </>
         )}
