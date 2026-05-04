@@ -1,7 +1,7 @@
 {
   "name": "pay-split",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.2.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,7 +17,6 @@
     "@capacitor/cli": "^8.3.1",
     "@capacitor/core": "^8.3.1",
     "@capacitor/filesystem": "^8.1.2",
-    "@capacitor/http": "^0.0.2",
     "crypto-js": "^4.2.0",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.14.0",
