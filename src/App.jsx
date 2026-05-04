@@ -27,6 +27,27 @@ import {
 import { App as CapacitorApp } from '@capacitor/app';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { FileOpener } from '@capacitor-community/file-opener';
+import { Browser } from '@capacitor/browser';
+import CryptoJS from 'crypto-js';
+
+// --- ENCRYPTION UTILS ---
+const SECRET_SALT = "paysplit_secure_v1_2026"; // Internal key for encryption
+
+const encryptData = (text) => {
+  if (!text) return "";
+  return CryptoJS.AES.encrypt(text, SECRET_SALT).toString();
+};
+
+const decryptData = (ciphertext) => {
+  if (!ciphertext) return "";
+  try {
+    const bytes = CryptoJS.AES.decrypt(ciphertext, SECRET_SALT);
+    const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+    return decrypted;
+  } catch (e) {
+    return "DECRYPTION_ERROR";
+  }
+};
 
 // --- UTILS ---
 const calculateDebts = (history) => {
@@ -86,47 +107,55 @@ const crc16 = (data) => {
 };
 
 const generateDynamicQRIS = (baseQRIS, amount) => {
-  if (!baseQRIS) return "";
+  if (!baseQRIS || !baseQRIS.trim()) return "";
 
-  // Clean QRIS from CRC (last 4 chars)
-  let qrisWithoutCRC = baseQRIS.substring(0, baseQRIS.length - 4);
-
-  // Find Tag 54 (Transaction Amount)
-  // Format: 54[length][value]
-  const amountTag = "54";
-  const amountStr = amount.toString();
-  const amountLen = amountStr.length.toString().padStart(2, '0');
-  const newAmountTag = amountTag + amountLen + amountStr;
-
-  let finalQRIS = "";
-  if (qrisWithoutCRC.includes("54")) {
-    // Replace existing amount
-    const parts = qrisWithoutCRC.split("54");
-    const after54 = parts[1];
-    const oldLen = parseInt(after54.substring(0, 2));
-    finalQRIS = parts[0] + newAmountTag + after54.substring(2 + oldLen);
-  } else {
-    // Insert Tag 54 before Tag 58 or Tag 59 or Tag 60
-    // Usually Tag 58 (Country Code) or 59 (Merchant Name)
-    const splitPoint = qrisWithoutCRC.indexOf("58");
-    if (splitPoint !== -1) {
-      finalQRIS = qrisWithoutCRC.substring(0, splitPoint) + newAmountTag + qrisWithoutCRC.substring(splitPoint);
+  // 1. Bersihkan base dari CRC lama (6304 + 4 char terakhir)
+  // Standard QRIS selalu diakhiri dengan 6304 + 4 digit CRC
+  let qrisData = baseQRIS.substring(0, baseQRIS.length - 4);
+  if (!qrisData.endsWith("6304")) {
+    // Jika user memasukkan string tanpa 6304, kita tambahkan (jarang terjadi tapi untuk jaga-jaga)
+    if (qrisData.includes("6304")) {
+      qrisData = qrisData.substring(0, qrisData.indexOf("6304") + 4);
     } else {
-      // Fallback
-      finalQRIS = qrisWithoutCRC + newAmountTag;
+      qrisData += "6304";
     }
   }
 
-  // Recalculate CRC
-  const newCRC = crc16(finalQRIS);
-  return finalQRIS + newCRC;
+  // 2. Siapkan Tag 54 (Amount)
+  const amountStr = Math.round(amount).toString();
+  const amountTag = "54" + amountStr.length.toString().padStart(2, '0') + amountStr;
+
+  // 3. Masukkan Tag 54 ke posisi yang benar
+  // Cari Tag 54 lama untuk diganti, atau sisipkan sebelum Tag 58 (Country Code)
+  let finalRaw = "";
+  if (qrisData.includes("54")) {
+    // Ganti Tag 54 yang ada
+    const parts = qrisData.split(/54\d{2}/);
+    // Ini agak riskan, mari gunakan cara yang lebih aman:
+    const tag54Index = qrisData.indexOf("54");
+    const len = parseInt(qrisData.substring(tag54Index + 2, tag54Index + 4));
+    finalRaw = qrisData.substring(0, tag54Index) + amountTag + qrisData.substring(tag54Index + 4 + len);
+  } else {
+    // Sisipkan sebelum Tag 58
+    const tag58Index = qrisData.indexOf("58");
+    if (tag58Index !== -1) {
+      finalRaw = qrisData.substring(0, tag58Index) + amountTag + qrisData.substring(tag58Index);
+    } else {
+      // Jika tidak ada Tag 58, taruh sebelum 6304
+      finalRaw = qrisData.substring(0, qrisData.length - 4) + amountTag + "6304";
+    }
+  }
+
+  // 4. Hitung ulang CRC16
+  const newCRC = crc16(finalRaw);
+  return finalRaw + newCRC;
 };
 
 const formatIDR = (val) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(val);
 
 // --- MAIN APP ---
 export default function App() {
-  const APP_VERSION = "1.2.2";
+  const APP_VERSION = "1.2.3";
   const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/venkyarisko/PaySplit/main";
   const GITHUB_RELEASE_URL = "https://github.com/venkyarisko/PaySplit/releases/latest";
 
@@ -179,6 +208,11 @@ export default function App() {
   const [showManualTaxSettings, setShowManualTaxSettings] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+
+  // PG State
+  const [newAccType, setNewAccType] = useState("MANUAL"); // MANUAL or PG
+  const [pgGateway, setPgGateway] = useState("MIDTRANS");
+  const [pgSlug, setPgSlug] = useState("");
 
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('darkMode');
@@ -463,9 +497,9 @@ export default function App() {
     if (payer) {
       message += `*⚠️ DIBAYARIN DULU OLEH: ${payer.name.toUpperCase()}*\n`;
       message += `Tolong transfer ke *${payer.name}* ya teman-teman! 🙏\n`;
-    } else if (accounts.length > 0) {
+    } else if (accounts.filter(acc => acc.type !== 'PG').length > 0) {
       message += `*Pembayaran Transfer Ke:*\n`;
-      accounts.forEach(acc => {
+      accounts.filter(acc => acc.type !== 'PG').forEach(acc => {
         message += `- ${acc.bank}: *${acc.number}* (a.n ${acc.name || 'Pemilik'})\n`;
       });
     }
@@ -624,40 +658,59 @@ export default function App() {
 
 
   const addAccount = () => {
-    if (newBank && newAcc) {
-      let bankName = newBank.trim();
-      const upperName = bankName.toUpperCase();
+    if (newAccType === 'MANUAL') {
+      if (newBank && newAcc) {
+        let bankName = newBank.trim();
+        const upperName = bankName.toUpperCase();
 
-      const popularBanks = [
-        'BCA', 'BRI', 'MANDIRI', 'BNI', 'BSI', 'BTN', 'CIMB', 'CIMB NIAGA',
-        'PERMATA', 'DANAMON', 'MAYBANK', 'OCBC', 'OCBC NISP', 'PANIN',
-        'MEGA', 'SINARMAS', 'BUKOPIN', 'BTPN', 'HSBC', 'UOB', 'BJB', 'JATIM'
-      ];
-      const eWallets = ['DANA', 'OVO', 'GOPAY', 'SHOPEEPAY', 'LINKAJA', 'JAGO', 'SEABANK', 'BLU'];
+        const popularBanks = [
+          'BCA', 'BRI', 'MANDIRI', 'BNI', 'BSI', 'BTN', 'CIMB', 'CIMB NIAGA',
+          'PERMATA', 'DANAMON', 'MAYBANK', 'OCBC', 'OCBC NISP', 'PANIN',
+          'MEGA', 'SINARMAS', 'BUKOPIN', 'BTPN', 'HSBC', 'UOB', 'BJB', 'JATIM'
+        ];
+        const eWallets = ['DANA', 'OVO', 'GOPAY', 'SHOPEEPAY', 'LINKAJA', 'JAGO', 'SEABANK', 'BLU'];
 
-      if (popularBanks.includes(upperName)) {
-        bankName = `BANK ${upperName}`;
-      } else if (eWallets.includes(upperName)) {
-        bankName = upperName;
-      } else if (!upperName.startsWith('BANK ') && !eWallets.some(w => upperName.includes(w))) {
-        // If it's a name we don't recognize but doesn't start with BANK, and isn't a wallet, add BANK
-        bankName = `BANK ${upperName}`;
-      } else {
-        bankName = upperName;
+        if (popularBanks.includes(upperName)) {
+          bankName = `BANK ${upperName}`;
+        } else if (eWallets.includes(upperName)) {
+          bankName = upperName;
+        } else if (!upperName.startsWith('BANK ') && !eWallets.some(w => upperName.includes(w))) {
+          bankName = `BANK ${upperName}`;
+        } else {
+          bankName = upperName;
+        }
+
+        setAccounts([...accounts, {
+          id: Date.now(),
+          bank: bankName,
+          number: newAcc,
+          name: newAccName.trim() || 'Pemilik',
+          link: newLink.trim(),
+          type: 'MANUAL'
+        }]);
+        setNewBank("");
+        setNewAcc("");
+        setNewAccName("");
+        setNewLink("");
+        setTempAccount(null);
       }
-
-      setAccounts([...accounts, {
-        id: Date.now(),
-        bank: bankName,
-        number: newAcc,
-        name: newAccName.trim() || 'Pemilik',
-        link: newLink.trim()
-      }]);
-      setNewBank("");
-      setNewAcc("");
-      setNewAccName("");
-      setNewLink("");
-      setTempAccount(null);
+    } else {
+      // PG ACCOUNT
+      if (pgSlug && newAcc) { // newAcc is API KEY for PG
+        setAccounts([...accounts, {
+          id: Date.now(),
+          bank: pgGateway,
+          number: encryptData(newAcc), // ENCRYPTED API KEY
+          slug: pgSlug,
+          name: pgSlug,
+          type: 'PG'
+        }]);
+        setNewAcc(""); // Clear API Key
+        setPgSlug("");
+        setTempAccount(null);
+      } else {
+        showToast("Slug dan API Key wajib diisi!");
+      }
     }
   };
 
@@ -995,7 +1048,10 @@ export default function App() {
   };
 
   const generateQR = async (amount) => {
-    if (!baseQRIS) return;
+    if (!baseQRIS || !baseQRIS.trim()) {
+      setQrCodeDataUrl("");
+      return;
+    }
     const dynamicQR = generateDynamicQRIS(baseQRIS, Math.round(amount));
     try {
       const url = await QRCode.toDataURL(dynamicQR, { width: 400, margin: 2 });
@@ -1004,6 +1060,7 @@ export default function App() {
       console.error(err);
     }
   };
+
 
   const generateDanaQR = async (link) => {
     let finalLink = link;
@@ -1231,63 +1288,132 @@ export default function App() {
                             <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Input Data Baru</span>
                             <button onClick={handleCancelAccount} style={{ border: 'none', background: 'none', color: '#ff4444', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Batal</button>
                           </div>
-                          <input
-                            value={newBank}
-                            onChange={(e) => setNewBank(e.target.value)}
-                            placeholder="Bank / E-Wallet (BCA, DANA, dsb)"
-                            style={{
-                              flex: '1 1 100%', padding: '14px', borderRadius: '16px',
-                              border: '1px solid var(--border)', background: 'var(--bg-container)',
-                              outline: 'none', fontSize: '13px', color: 'var(--text-main)'
-                            }}
-                          />
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '4px', width: '100%' }}>
-                            {['BCA', 'BRI', 'MANDIRI', 'BNI', 'BSI', 'CIMB', 'OCBC', 'PERMATA', 'JAGO', 'DANA', 'OVO', 'GOPAY', 'SHOPEEPAY'].map(bank => (
-                              <div
-                                key={bank}
-                                onClick={() => setNewBank(bank)}
+                          <div style={{ display: 'flex', background: 'var(--border)', borderRadius: '12px', padding: '4px', width: '100%', marginBottom: '8px' }}>
+                            <button
+                              onClick={() => setNewAccType("MANUAL")}
+                              style={{
+                                flex: 1, padding: '8px', borderRadius: '10px', border: 'none',
+                                background: newAccType === 'MANUAL' ? 'var(--bg-container)' : 'transparent',
+                                color: newAccType === 'MANUAL' ? 'var(--text-main)' : 'var(--text-muted)',
+                                fontSize: '11px', fontWeight: 800, cursor: 'pointer', transition: 'all 0.2s'
+                              }}
+                            >
+                              BANK / E-WALLET
+                            </button>
+                            <button
+                              onClick={() => setNewAccType("PG")}
+                              style={{
+                                flex: 1, padding: '8px', borderRadius: '10px', border: 'none',
+                                background: newAccType === 'PG' ? 'var(--bg-container)' : 'transparent',
+                                color: newAccType === 'PG' ? 'var(--text-main)' : 'var(--text-muted)',
+                                fontSize: '11px', fontWeight: 800, cursor: 'pointer', transition: 'all 0.2s'
+                              }}
+                            >
+                              PAYMENT GATEWAY
+                            </button>
+                          </div>
+
+                          {newAccType === 'MANUAL' ? (
+                            <>
+                              <input
+                                value={newBank}
+                                onChange={(e) => setNewBank(e.target.value)}
+                                placeholder="Bank / E-Wallet (BCA, DANA, dsb)"
                                 style={{
-                                  fontSize: '10px', fontWeight: 800, padding: '6px 10px', borderRadius: '10px',
-                                  background: newBank.toUpperCase() === bank ? 'var(--btn-primary-bg)' : 'var(--border)',
-                                  color: newBank.toUpperCase() === bank ? 'var(--btn-primary-text)' : 'var(--text-muted)',
-                                  cursor: 'pointer',
-                                  transition: 'all 0.2s'
+                                  flex: '1 1 100%', padding: '14px', borderRadius: '16px',
+                                  border: '1px solid var(--border)', background: 'var(--bg-container)',
+                                  outline: 'none', fontSize: '13px', color: 'var(--text-main)'
+                                }}
+                              />
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '4px', width: '100%' }}>
+                                {['BCA', 'BRI', 'MANDIRI', 'BNI', 'BSI', 'CIMB', 'OCBC', 'PERMATA', 'JAGO', 'DANA', 'OVO', 'GOPAY', 'SHOPEEPAY'].map(bank => (
+                                  <div
+                                    key={bank}
+                                    onClick={() => setNewBank(bank)}
+                                    style={{
+                                      fontSize: '10px', fontWeight: 800, padding: '6px 10px', borderRadius: '10px',
+                                      background: newBank.toUpperCase() === bank ? 'var(--btn-primary-bg)' : 'var(--border)',
+                                      color: newBank.toUpperCase() === bank ? 'var(--btn-primary-text)' : 'var(--text-muted)',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.2s'
+                                    }}
+                                  >
+                                    {bank}
+                                  </div>
+                                ))}
+                              </div>
+                              <input
+                                value={newAcc}
+                                onChange={(e) => setNewAcc(e.target.value)}
+                                placeholder={newBank.toLowerCase().includes('dana') ? "No. HP / Slug" : "Nomor Rekening"}
+                                style={{
+                                  flex: '1 1 120px', padding: '14px', borderRadius: '16px',
+                                  border: '1px solid var(--border)', background: 'var(--bg-container)',
+                                  outline: 'none', fontSize: '13px', color: 'var(--text-main)'
+                                }}
+                              />
+                              <input
+                                value={newAccName}
+                                onChange={(e) => setNewAccName(e.target.value)}
+                                placeholder="Nama Pemilik (a.n)"
+                                style={{
+                                  flex: '1 1 120px', padding: '14px', borderRadius: '16px',
+                                  border: '1px solid var(--border)', background: 'var(--bg-container)',
+                                  outline: 'none', fontSize: '13px', color: 'var(--text-main)'
+                                }}
+                              />
+                              <input
+                                value={newLink}
+                                onChange={(e) => setNewLink(e.target.value)}
+                                placeholder="Link Pembayaran / DANA Minta (Opsional)"
+                                style={{
+                                  flex: '1 1 100%', padding: '14px', borderRadius: '16px',
+                                  border: '1px solid var(--border)', background: 'var(--bg-container)',
+                                  outline: 'none', fontSize: '13px', color: 'var(--text-main)'
+                                }}
+                              />
+                            </>
+                          ) : (
+                            <>
+                              <select
+                                value={pgGateway}
+                                onChange={(e) => setPgGateway(e.target.value)}
+                                style={{
+                                  flex: '1 1 100%', padding: '14px', borderRadius: '16px',
+                                  border: '1px solid var(--border)', background: 'var(--bg-container)',
+                                  outline: 'none', fontSize: '13px', color: 'var(--text-main)'
                                 }}
                               >
-                                {bank}
+                                {['MIDTRANS', 'XENDIT', 'IPAYMU', 'QRIS.ID', 'PAKASIR'].map(gw => (
+                                  <option key={gw} value={gw}>{gw}</option>
+                                ))}
+                              </select>
+                              <input
+                                value={pgSlug}
+                                onChange={(e) => setPgSlug(e.target.value)}
+                                placeholder="Slug / Merchant ID / Username"
+                                style={{
+                                  flex: '1 1 100%', padding: '14px', borderRadius: '16px',
+                                  border: '1px solid var(--border)', background: 'var(--bg-container)',
+                                  outline: 'none', fontSize: '13px', color: 'var(--text-main)'
+                                }}
+                              />
+                              <input
+                                type="password"
+                                value={newAcc}
+                                onChange={(e) => setNewAcc(e.target.value)}
+                                placeholder="API Key / Secret Key"
+                                style={{
+                                  flex: '1 1 100%', padding: '14px', borderRadius: '16px',
+                                  border: '1px solid var(--border)', background: 'var(--bg-container)',
+                                  outline: 'none', fontSize: '13px', color: 'var(--text-main)'
+                                }}
+                              />
+                              <div style={{ fontSize: '10px', color: '#ef4444', fontWeight: 600, padding: '0 8px' }}>
+                                ⚠️ API Key akan dienkripsi dan tidak bisa diedit setelah disimpan.
                               </div>
-                            ))}
-                          </div>
-                          <input
-                            value={newAcc}
-                            onChange={(e) => setNewAcc(e.target.value)}
-                            placeholder={newBank.toLowerCase().includes('dana') ? "No. HP / Slug" : "Nomor Rekening"}
-                            style={{
-                              flex: '1 1 120px', padding: '14px', borderRadius: '16px',
-                              border: '1px solid var(--border)', background: 'var(--bg-container)',
-                              outline: 'none', fontSize: '13px', color: 'var(--text-main)'
-                            }}
-                          />
-                          <input
-                            value={newAccName}
-                            onChange={(e) => setNewAccName(e.target.value)}
-                            placeholder="Nama Pemilik (a.n)"
-                            style={{
-                              flex: '1 1 120px', padding: '14px', borderRadius: '16px',
-                              border: '1px solid var(--border)', background: 'var(--bg-container)',
-                              outline: 'none', fontSize: '13px', color: 'var(--text-main)'
-                            }}
-                          />
-                          <input
-                            value={newLink}
-                            onChange={(e) => setNewLink(e.target.value)}
-                            placeholder="Link Pembayaran / DANA Minta (Opsional)"
-                            style={{
-                              flex: '1 1 100%', padding: '14px', borderRadius: '16px',
-                              border: '1px solid var(--border)', background: 'var(--bg-container)',
-                              outline: 'none', fontSize: '13px', color: 'var(--text-main)'
-                            }}
-                          />
+                            </>
+                          )}
                           <button
                             className="btn-primary"
                             style={{ width: '100%', padding: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
@@ -1296,7 +1422,7 @@ export default function App() {
                               setShowAddAccount(false);
                             }}
                           >
-                            <Save size={18} color="currentColor" /> Simpan Rekening
+                            <Save size={18} color="currentColor" /> Simpan {newAccType === 'MANUAL' ? 'Rekening' : 'Gateway'}
                           </button>
                         </div>
                       </motion.div>
@@ -1346,40 +1472,53 @@ export default function App() {
                               <div>
                                 <div style={{ fontWeight: 600, fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                   {acc.bank}
+                                  {acc.type === 'PG' && (
+                                    <span style={{ fontSize: '8px', background: 'var(--accent)', color: 'white', padding: '1px 5px', borderRadius: '6px', fontWeight: 900, textTransform: 'uppercase' }}>PG</span>
+                                  )}
                                   {acc.link && (
                                     <span style={{ fontSize: '8px', background: '#22c55e', color: 'white', padding: '1px 5px', borderRadius: '6px', fontWeight: 900, textTransform: 'uppercase' }}>Linked</span>
                                   )}
                                 </div>
-                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{acc.number} {acc.name && <span style={{ opacity: 0.6, fontSize: '10px' }}>• a.n {acc.name}</span>}</div>
+                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                  {acc.type === 'PG' ? 'Gateway Pembayaran Aktif' : acc.number}
+                                  {acc.type !== 'PG' && acc.name && <span style={{ opacity: 0.6, fontSize: '10px' }}> • a.n {acc.name}</span>}
+                                </div>
                               </div>
                             </div>
                             <div style={{ display: 'flex', gap: '8px' }}>
-                              <button
-                                onClick={() => {
-                                  showConfirm(
-                                    "Ubah Data Akun?",
-                                    `Pindahkan data ${acc.bank} ke form input untuk diubah?`,
-                                    () => {
-                                      if (tempAccount) {
-                                        setAccounts(prev => [...prev, tempAccount]);
-                                      }
-                                      setTempAccount(acc);
-                                      setNewBank(acc.bank);
-                                      setNewAcc(acc.number);
-                                      setNewAccName(acc.name || "");
-                                      setNewLink(acc.link || "");
-                                      setShowAddAccount(true);
-                                      setAccounts(prev => prev.filter(a => a.id !== acc.id));
-                                      showToast("Data dipindahkan ke input!");
-                                    },
-                                    "Ya, Ubah"
-                                  );
-                                }}
-                                style={{ border: 'none', background: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                                title="Edit Rekening"
-                              >
-                                <Edit2 size={16} />
-                              </button>
+                              {acc.type !== 'PG' ? (
+                                <button
+                                  onClick={() => {
+                                    showConfirm(
+                                      "Ubah Data Akun?",
+                                      `Pindahkan data ${acc.bank} ke form input untuk diubah?`,
+                                      () => {
+                                        if (tempAccount) {
+                                          setAccounts(prev => [...prev, tempAccount]);
+                                        }
+                                        setTempAccount(acc);
+                                        setNewBank(acc.bank);
+                                        setNewAcc(acc.number);
+                                        setNewAccName(acc.name || "");
+                                        setNewLink(acc.link || "");
+                                        setNewAccType("MANUAL");
+                                        setShowAddAccount(true);
+                                        setAccounts(prev => prev.filter(a => a.id !== acc.id));
+                                        showToast("Data dipindahkan ke input!");
+                                      },
+                                      "Ya, Ubah"
+                                    );
+                                  }}
+                                  style={{ border: 'none', background: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                                  title="Edit Rekening"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                              ) : (
+                                <div title="Payment Gateway tidak bisa diedit (keamanan)" style={{ color: 'var(--text-muted)', opacity: 0.3, display: 'flex', alignItems: 'center' }}>
+                                  <Edit2 size={16} />
+                                </div>
+                              )}
                               <button onClick={() => removeAccount(acc.id)} style={{ border: 'none', background: 'none', color: '#ff4444', cursor: 'pointer' }}>
                                 <Trash2 size={16} />
                               </button>
@@ -2746,7 +2885,7 @@ export default function App() {
                   <div style={{ fontSize: '32px', fontWeight: 900, color: 'var(--text-main)', letterSpacing: '-1px' }}>{formatIDR(calculateTotal(selectedPayer?.id))}</div>
                 </div>
 
-                {baseQRIS && (
+                {baseQRIS && baseQRIS.trim() && (
                   <div style={{
                     background: 'var(--bg-container)', padding: '16px', borderRadius: '32px',
                     boxShadow: '0 10px 30px var(--shadow)', marginBottom: '32px',
@@ -2809,110 +2948,127 @@ export default function App() {
                 {accounts.length > 0 && (
                   <div style={{ width: '100%', maxWidth: '340px' }}>
                     <p style={{ fontSize: '10px', color: '#bbb', textAlign: 'center', marginBottom: '16px', letterSpacing: '1.5px', fontWeight: 700 }}>OPSI TRANSFER</p>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {accounts
-                        .sort((a, b) => a.bank.localeCompare(b.bank))
-                        .map(acc => {
-                          const bankLower = acc.bank.toLowerCase();
-                          let logoSrc = null;
-                          let bgColor = "#f0f0f0";
+                    {accounts
+                      .sort((a, b) => a.bank.localeCompare(b.bank))
+                      .map(acc => {
+                        const bankLower = acc.bank.toLowerCase();
+                        let logoSrc = null;
+                        let bgColor = "#f0f0f0";
 
-                          if (bankLower.includes('dana')) { logoSrc = "/Dana-logo.png"; bgColor = "#118ee9"; }
-                          else if (bankLower.includes('jago')) { logoSrc = "/Jago_logo.png"; bgColor = "#ff9d00"; }
-                          else if (bankLower.includes('gopay')) { logoSrc = "/Gopay_logo.png"; bgColor = "#00AED1"; }
-                          else if (bankLower.includes('bca')) { logoSrc = "/Bank_Central_Asia.png"; bgColor = "#0060AF"; }
-                          else if (bankLower.includes('bri')) bgColor = "#00529C";
-                          else if (bankLower.includes('mandiri')) bgColor = "#003D79";
+                        if (bankLower.includes('dana')) { logoSrc = "/Dana-logo.png"; bgColor = "#118ee9"; }
+                        else if (bankLower.includes('jago')) { logoSrc = "/Jago_logo.png"; bgColor = "#ff9d00"; }
+                        else if (bankLower.includes('gopay')) { logoSrc = "/Gopay_logo.png"; bgColor = "#00AED1"; }
+                        else if (bankLower.includes('bca')) { logoSrc = "/Bank_Central_Asia.png"; bgColor = "#0060AF"; }
+                        else if (bankLower.includes('bri')) bgColor = "#00529C";
+                        else if (bankLower.includes('mandiri')) bgColor = "#003D79";
+                        else if (bankLower === 'pakasir') bgColor = "#4f46e5";
 
-                          return (
-                            <div
-                              key={acc.id}
-                              onClick={async () => {
-                                if (acc.link) {
-                                  // Prioritize Link (usually for DANA or other direct payment links)
-                                  generateDanaQR(acc.link);
-                                } else if (acc.bank.toLowerCase().includes('dana')) {
-                                  // Fallback for DANA without link (using number)
-                                  generateDanaQR(acc.number);
+                        return (
+                          <div
+                            key={acc.id}
+                            onClick={async () => {
+                              if (acc.type === 'PG') {
+                                // GATEWAY REDIRECT LOGIC
+                                if (acc.bank.toUpperCase() === 'PAKASIR') {
+                                  const amount = Math.round(calculateTotal(selectedPayer.id));
+                                  const orderId = `INV-${Date.now()}`;
+                                  const payUrl = `https://app.pakasir.com/pay/${acc.slug}/${amount}?order_id=${orderId}&qris_only=1`;
+                                  await Browser.open({ url: payUrl });
                                 } else {
-                                  let currentQR = null;
-                                  try {
-                                    // Generate QR code based on the account number
-                                    currentQR = await QRCode.toDataURL(acc.number, { width: 400, margin: 2 });
-                                  } catch (err) {
-                                    console.error("Number QR Generation failed", err);
-                                  }
-
-                                  if (currentQR) {
-                                    setQrModalData({
-                                      title: acc.bank,
-                                      subtitle: `Scan QR untuk menyalin nomor: ${acc.number}`,
-                                      logo: logoSrc,
-                                      qrUrl: currentQR
-                                    });
-                                    setShowQRModal(true);
-                                  } else {
-                                    // Fallback to copy if generation failed
-                                    navigator.clipboard.writeText(acc.number);
-                                    showToast(`${acc.bank} disalin!`);
-                                  }
+                                  showToast(`${acc.bank} belum mendukung redirect otomatis.`);
                                 }
-                              }}
-                              style={{
-                                border: '1px solid var(--border)',
-                                padding: '16px 20px',
-                                borderRadius: '20px',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                background: 'var(--bg-container)',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                              }}
-                              onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.98)'}
-                              onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div style={{
-                                  width: '42px', height: '42px', background: logoSrc ? 'transparent' : bgColor,
-                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                  flexShrink: 0, borderRadius: logoSrc ? '0' : '12px', overflow: 'hidden'
-                                }}>
-                                  {logoSrc ? (
-                                    <img
-                                      src={logoSrc}
-                                      alt={acc.bank}
-                                      style={{
-                                        height: '30px',
-                                        width: '100%',
-                                        objectFit: 'contain'
-                                      }}
-                                      onError={(e) => {
-                                        e.target.style.display = 'none';
-                                        e.target.parentElement.style.background = bgColor;
-                                        e.target.parentElement.style.borderRadius = '12px';
-                                        e.target.parentElement.innerHTML = `<span style="color:white;font-weight:900;font-size:16px">${acc.bank[0].toUpperCase()}</span>`;
-                                      }}
-                                    />
-                                  ) : (
-                                    <span style={{ color: 'white', fontWeight: 900, fontSize: '16px' }}>{acc.bank[0].toUpperCase()}</span>
+                                return;
+                              }
+
+                              if (acc.link) {
+                                // Prioritize Link (usually for DANA or other direct payment links)
+                                generateDanaQR(acc.link);
+                              } else if (acc.bank.toLowerCase().includes('dana')) {
+                                // Fallback for DANA without link (using number)
+                                generateDanaQR(acc.number);
+                              } else {
+                                let currentQR = null;
+                                try {
+                                  // Generate QR code based on the account number
+                                  currentQR = await QRCode.toDataURL(acc.number, { width: 400, margin: 2 });
+                                } catch (err) {
+                                  console.error("Number QR Generation failed", err);
+                                }
+
+                                if (currentQR) {
+                                  setQrModalData({
+                                    title: acc.bank,
+                                    subtitle: `Scan QR untuk menyalin nomor: ${acc.number}`,
+                                    logo: logoSrc,
+                                    qrUrl: currentQR
+                                  });
+                                  setShowQRModal(true);
+                                } else {
+                                  // Fallback to copy if generation failed
+                                  navigator.clipboard.writeText(acc.number);
+                                  showToast(`${acc.bank} disalin!`);
+                                }
+                              }
+                            }}
+                            style={{
+                              border: '1px solid var(--border)',
+                              padding: '16px 20px',
+                              borderRadius: '20px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              background: 'var(--bg-container)',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s'
+                            }}
+                            onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.98)'}
+                            onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div style={{
+                                width: '42px', height: '42px', background: logoSrc ? 'transparent' : bgColor,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                flexShrink: 0, borderRadius: logoSrc ? '0' : '12px', overflow: 'hidden'
+                              }}>
+                                {logoSrc ? (
+                                  <img
+                                    src={logoSrc}
+                                    alt={acc.bank}
+                                    style={{
+                                      height: '30px',
+                                      width: '100%',
+                                      objectFit: 'contain'
+                                    }}
+                                    onError={(e) => {
+                                      e.target.style.display = 'none';
+                                      e.target.parentElement.style.background = bgColor;
+                                      e.target.parentElement.style.borderRadius = '12px';
+                                      e.target.parentElement.innerHTML = `<span style="color:white;font-weight:900;font-size:16px">${acc.bank[0].toUpperCase()}</span>`;
+                                    }}
+                                  />
+                                ) : (
+                                  <span style={{ color: 'white', fontWeight: 900, fontSize: '16px' }}>{acc.bank[0].toUpperCase()}</span>
+                                )}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  {acc.bank}
+                                  {acc.type === 'PG' && (
+                                    <span style={{ fontSize: '8px', background: 'var(--text-main)', color: 'var(--bg-container)', padding: '1px 5px', borderRadius: '6px', fontWeight: 900, textTransform: 'uppercase' }}>PG</span>
+                                  )}
+                                  {acc.link && acc.type !== 'PG' && (
+                                    <span style={{ fontSize: '8px', background: '#22c55e', color: 'white', padding: '1px 5px', borderRadius: '6px', fontWeight: 900, textTransform: 'uppercase' }}>Linked</span>
                                   )}
                                 </div>
-                                <div>
-                                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    {acc.bank}
-                                    {acc.link && (
-                                      <span style={{ fontSize: '8px', background: '#22c55e', color: 'white', padding: '1px 5px', borderRadius: '6px', fontWeight: 900, textTransform: 'uppercase' }}>Linked</span>
-                                    )}
-                                  </div>
-                                  <div style={{ fontSize: '15px', color: 'var(--text-main)', fontWeight: 500, letterSpacing: '0.5px', marginTop: '2px' }}>{acc.number}</div>
+                                <div style={{ fontSize: '15px', color: 'var(--text-main)', fontWeight: 500, letterSpacing: '0.5px', marginTop: '2px' }}>
+                                  {acc.type === 'PG' ? 'Payment Gateway' : acc.number}
                                 </div>
                               </div>
-                              <ChevronRight size={18} color="#ccc" />
                             </div>
-                          );
-                        })}
-                    </div>
+                            <ChevronRight size={18} color="#ccc" />
+                          </div>
+                        );
+                      })}
                     <p style={{ fontSize: '10px', color: '#ccc', textAlign: 'center', marginTop: '20px', lineHeight: '1.5' }}>Mendukung semua bank & e-wallet<br />(BCA, OVO, GoPay, dll).</p>
                   </div>
                 )}
