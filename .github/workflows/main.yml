@@ -55,7 +55,8 @@ jobs:
 
       - name: Prepare APK for Release
         run: |
-          mv android/app/build/outputs/apk/release/app-release.apk PaySplit.apk
+          # Mencari file apk apa pun di folder release dan mengganti namanya
+          find android/app/build/outputs/apk/release/ -name "*.apk" -exec mv {} PaySplit.apk \;
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -70,6 +71,7 @@ jobs:
           files: PaySplit.apk
           name: Release ${{ github.ref_name }}
           body: "Silakan download file PaySplit.apk di bawah untuk menginstall versi terbaru."
+          tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: false
         env:
