@@ -194,7 +194,8 @@ export default function App() {
     isOpen: false,
     title: "",
     message: "",
-    onConfirm: () => { }
+    onConfirm: () => { },
+    variant: 'danger' // 'danger' or 'success'
   });
 
   const [showThanksModal, setShowThanksModal] = useState(false);
@@ -230,7 +231,6 @@ export default function App() {
       
       if (response.status === 404) {
         if (manual) showToast("File version.json tidak ditemukan di GitHub ❌");
-        console.error("Update check failed: File version.json not found on GitHub. Make sure you have pushed it to the main branch.");
         return;
       }
       
@@ -240,13 +240,23 @@ export default function App() {
       
       if (data.version !== APP_VERSION) {
         setUpdateAvailable(data);
-        if (manual) showToast(`Versi ${data.version} tersedia!`);
+        
+        // Munculkan Modal Konfirmasi jika ada update
+        showConfirm(
+          "Update Tersedia! 🚀",
+          `Versi baru ${data.version} sudah rilis.\n\nCatatan: ${data.notes || 'Peningkatan performa dan fitur baru.'}\n\nMau download sekarang?`,
+          () => window.open(GITHUB_RELEASE_URL, '_blank'),
+          "Download Sekarang",
+          null,
+          "",
+          "success"
+        );
       } else {
         if (manual) showToast("Aplikasi sudah versi terbaru ✨");
       }
     } catch (err) {
       console.error("Update check error:", err);
-      if (manual) showToast("Gagal mengecek update (Cek koneksi/GitHub) ⚠️");
+      if (manual) showToast("Gagal mengecek update ⚠️");
     }
   };
 
@@ -486,12 +496,13 @@ export default function App() {
     }
   };
 
-  const showConfirm = (title, message, onConfirm, btnText = "Ya, Hapus", onDanger = null, dangerText = "") => {
+  const showConfirm = (title, message, onConfirm, btnText = "Ya, Hapus", onDanger = null, dangerText = "", variant = "danger") => {
     setConfirmConfig({
       isOpen: true,
       title,
       message,
       btnText,
+      variant,
       onConfirm: () => {
         onConfirm && onConfirm();
         setConfirmConfig(prev => ({ ...prev, isOpen: false }));
@@ -3381,21 +3392,23 @@ export default function App() {
               }}
             >
               <div style={{
-                width: '64px', height: '64px', background: '#fff0f0', borderRadius: '22px',
+                width: '64px', height: '64px', 
+                background: confirmConfig.variant === 'success' ? 'rgba(34, 197, 94, 0.1)' : '#fff0f0', 
+                borderRadius: '22px',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px',
-                color: '#ff4444'
+                color: confirmConfig.variant === 'success' ? '#22c55e' : '#ff4444'
               }}>
-                <Trash2 size={32} />
+                {confirmConfig.variant === 'success' ? <Info size={32} /> : <Trash2 size={32} />}
               </div>
               <h2 style={{ margin: '0 0 12px 0', fontSize: '22px', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px' }}>{confirmConfig.title}</h2>
               <p style={{ margin: '0 0 32px 0', fontSize: '15px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>{confirmConfig.message}</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <button
                   className="btn-primary"
-                  style={{ background: confirmConfig.onDanger ? 'var(--btn-primary-bg)' : '#ff4444', padding: '18px' }}
+                  style={{ background: confirmConfig.variant === 'success' ? '#22c55e' : (confirmConfig.onDanger ? 'var(--btn-primary-bg)' : '#ff4444'), padding: '18px' }}
                   onClick={confirmConfig.onConfirm}
                 >
-                  {confirmConfig.btnText || "Ya, Hapus Semua"}
+                  {confirmConfig.btnText || (confirmConfig.variant === 'success' ? "Update" : "Ya, Hapus Semua")}
                 </button>
 
                 {confirmConfig.onDanger && (
