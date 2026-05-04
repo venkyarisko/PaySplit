@@ -23,6 +23,7 @@ import {
   Share2,
   Search
 } from 'lucide-react';
+import { App as CapacitorApp } from '@capacitor/app';
 
 // --- UTILS ---
 const calculateDebts = (history) => {
@@ -205,6 +206,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('billHistory', JSON.stringify(history));
   }, [history]);
+
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    if (!showSettings && tempAccount) {
+      handleCancelAccount();
+    }
+  }, [showSettings, tempAccount]);
 
   const clearHistory = () => {
     showConfirm(
@@ -887,25 +896,104 @@ export default function App() {
     else if (step > 0) setStep(s => s - 1);
   };
 
+
   const screenVariants = {
     initial: { x: 300, opacity: 0 },
     animate: { x: 0, opacity: 1 },
     exit: { x: -300, opacity: 0 }
   };
 
-  const [showSettings, setShowSettings] = useState(false);
-
-  useEffect(() => {
-    if (!showSettings && tempAccount) {
-      handleCancelAccount();
-    }
-  }, [showSettings]);
 
   const isAllPaid = participants.length > 0 && participants.every(p =>
     p.id === billPayerId ||
     (p.id === 'me' && (billPayerId === null || billPayerId === 'me')) ||
     paidParticipants.some(pp => pp.id === p.id)
   );
+
+  const lastBackPress = useRef(0);
+
+  useEffect(() => {
+    const handleBack = () => {
+      if (confirmConfig.isOpen) {
+        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+        return false;
+      }
+      if (showSettings) {
+        setShowSettings(false);
+        return false;
+      }
+      if (showFriendsModal) {
+        setShowFriendsModal(false);
+        return false;
+      }
+      if (showEstInfo) {
+        setShowEstInfo(null);
+        return false;
+      }
+      if (showFullMenu) {
+        setShowFullMenu(false);
+        return false;
+      }
+      if (showManualInput) {
+        setShowManualInput(false);
+        return false;
+      }
+      if (showDanaQRModal) {
+        setShowDanaQRModal(false);
+        return false;
+      }
+      if (showQRModal) {
+        setShowQRModal(false);
+        return false;
+      }
+      if (showThanksModal) {
+        setShowThanksModal(false);
+        return false;
+      }
+      if (selectedHistory) {
+        setSelectedHistory(null);
+        setStep(historyOriginStep);
+        return false;
+      }
+      if (step > 0) {
+        prevStep();
+        return false;
+      }
+      return true; // Should exit
+    };
+
+    const backListener = CapacitorApp.addListener('backButton', () => {
+      const shouldExit = handleBack();
+      if (shouldExit) {
+        if (Date.now() - lastBackPress.current < 2000) {
+          CapacitorApp.exitApp();
+        } else {
+          showToast("Tekan sekali lagi untuk keluar");
+          lastBackPress.current = Date.now();
+        }
+      }
+    });
+
+    // Also handle browser back button (popstate)
+    const handlePopState = (e) => {
+      e.preventDefault();
+      handleBack();
+      // Push state again to keep the app "stuck" in the current URL so back always triggers popstate
+      window.history.pushState(null, null, window.location.pathname);
+    };
+
+    window.history.pushState(null, null, window.location.pathname);
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      backListener.then(l => l.remove());
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [
+    step, showSettings, showFriendsModal, showEstInfo, showFullMenu, 
+    showManualInput, showDanaQRModal, showQRModal, confirmConfig.isOpen, 
+    showThanksModal, selectedHistory, historyOriginStep, prevStep
+  ]);
 
   return (
     <div className={`mobile-container ${darkMode ? 'dark' : ''}`}>
