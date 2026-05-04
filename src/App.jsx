@@ -155,7 +155,7 @@ const formatIDR = (val) => new Intl.NumberFormat('id-ID', { style: 'currency', c
 
 // --- MAIN APP ---
 export default function App() {
-  const APP_VERSION = "1.2.3";
+  const APP_VERSION = "1.2.4";
   const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/venkyarisko/PaySplit/main";
   const GITHUB_RELEASE_URL = "https://github.com/venkyarisko/PaySplit/releases/latest";
 
