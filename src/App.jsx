@@ -123,7 +123,12 @@ const formatIDR = (val) => new Intl.NumberFormat('id-ID', { style: 'currency', c
 
 // --- MAIN APP ---
 export default function App() {
+  const APP_VERSION = "1.2.0";
+  const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/venkyarisko/PaySplit/main";
+  const GITHUB_RELEASE_URL = "https://github.com/venkyarisko/PaySplit/releases/latest";
+
   const [step, setStep] = useState(0);
+  const [updateAvailable, setUpdateAvailable] = useState(null); // { version: string, notes: string }
   const [baseQRIS, setBaseQRIS] = useState(() => localStorage.getItem('baseQRIS') || "");
   const [accounts, setAccounts] = useState(() => {
     const saved = localStorage.getItem('paymentAccounts');
@@ -213,7 +218,37 @@ export default function App() {
     if (!showSettings && tempAccount) {
       handleCancelAccount();
     }
+    // Auto check update when opening settings
+    if (showSettings) {
+      checkUpdate(false);
+    }
   }, [showSettings, tempAccount]);
+
+  const checkUpdate = async (manual = true) => {
+    try {
+      const response = await fetch(`${GITHUB_RAW_BASE}/public/version.json?t=${Date.now()}`);
+      
+      if (response.status === 404) {
+        if (manual) showToast("File version.json tidak ditemukan di GitHub ❌");
+        console.error("Update check failed: File version.json not found on GitHub. Make sure you have pushed it to the main branch.");
+        return;
+      }
+      
+      if (!response.ok) throw new Error("Network response was not ok");
+      
+      const data = await response.json();
+      
+      if (data.version !== APP_VERSION) {
+        setUpdateAvailable(data);
+        if (manual) showToast(`Versi ${data.version} tersedia!`);
+      } else {
+        if (manual) showToast("Aplikasi sudah versi terbaru ✨");
+      }
+    } catch (err) {
+      console.error("Update check error:", err);
+      if (manual) showToast("Gagal mengecek update (Cek koneksi/GitHub) ⚠️");
+    }
+  };
 
   const clearHistory = () => {
     showConfirm(
@@ -1028,7 +1063,7 @@ export default function App() {
               onClick={() => setShowSettings(false)}
               style={{
                 position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-                background: 'rgba(0,0,0,0.4)', zIndex: 99
+                background: 'rgba(0,0,0,0.4)', zIndex: 99, willChange: 'opacity'
               }}
             />
             <motion.div
@@ -1042,7 +1077,7 @@ export default function App() {
                 background: 'var(--bg-container)', zIndex: 100, borderTopLeftRadius: '32px', borderTopRightRadius: '32px',
                 padding: '24px', boxShadow: '0 -10px 40px rgba(0,0,0,0.2)',
                 maxHeight: '70%', display: 'flex', flexDirection: 'column',
-                boxSizing: 'border-box'
+                boxSizing: 'border-box', willChange: 'transform'
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -1389,17 +1424,51 @@ export default function App() {
             </div>
 
             <div style={{ width: '100%', marginTop: 'auto' }}>
-              <div style={{
-                marginBottom: '20px',
-                fontSize: '11px',
-                color: 'var(--text-secondary)',
-                letterSpacing: '1px',
-                textTransform: 'uppercase',
-                fontWeight: 600,
-                opacity: 0.7
-              }}>
-                venky arisko • Versi 1.2
-              </div>
+              {updateAvailable ? (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  onClick={() => window.open(GITHUB_RELEASE_URL, '_blank')}
+                  style={{
+                    marginBottom: '16px',
+                    padding: '12px 16px',
+                    background: 'rgba(34, 197, 94, 0.1)',
+                    borderRadius: '16px',
+                    border: '1px solid #22c55e',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px'
+                  }}
+                >
+                  <div style={{ textAlign: 'left' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 900, color: '#22c55e', textTransform: 'uppercase' }}>Update Tersedia!</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Versi {updateAvailable.version} sudah rilis</div>
+                  </div>
+                  <div style={{ background: '#22c55e', color: 'white', padding: '6px 12px', borderRadius: '10px', fontSize: '11px', fontWeight: 800 }}>Download</div>
+                </motion.div>
+              ) : (
+                <div 
+                  onClick={() => checkUpdate(true)}
+                  style={{
+                    marginBottom: '20px',
+                    fontSize: '11px',
+                    color: 'var(--text-secondary)',
+                    letterSpacing: '1px',
+                    textTransform: 'uppercase',
+                    fontWeight: 600,
+                    opacity: 0.7,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  venky arisko • Versi {APP_VERSION} <Info size={12} />
+                </div>
+              )}
               <button className="btn-primary" onClick={nextStep} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
                 Mulai Patungan <Plus size={20} />
               </button>
@@ -3287,7 +3356,8 @@ export default function App() {
               onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
               style={{
                 position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-                background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 10000
+                background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 10000,
+                willChange: 'opacity'
               }}
             />
             <motion.div
@@ -3306,7 +3376,8 @@ export default function App() {
                 zIndex: 10001,
                 textAlign: 'center',
                 boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
-                boxSizing: 'border-box'
+                boxSizing: 'border-box',
+                willChange: 'transform, opacity'
               }}
             >
               <div style={{
@@ -3361,7 +3432,8 @@ export default function App() {
               onClick={() => setShowDanaQRModal(false)}
               style={{
                 position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-                background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', zIndex: 10000
+                background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', zIndex: 10000,
+                willChange: 'opacity'
               }}
             />
             <motion.div
@@ -3380,7 +3452,8 @@ export default function App() {
                 zIndex: 10001,
                 textAlign: 'center',
                 boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-                boxSizing: 'border-box'
+                boxSizing: 'border-box',
+                willChange: 'transform, opacity'
               }}
             >
               <div style={{ marginBottom: '20px' }}>

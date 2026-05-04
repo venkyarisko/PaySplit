@@ -101,6 +101,7 @@ body {
   padding: 0 24px 24px; /* Reduced top padding since global nav has it */
   box-sizing: border-box;
   background: var(--bg-container);
+  will-change: transform, opacity;
 }
 
 .screens-container {
@@ -155,6 +156,7 @@ p {
   font-weight: 600;
   cursor: pointer;
   transition: transform 0.2s, background 0.2s, opacity 0.2s;
+  will-change: transform, opacity;
 }
 
 .btn-primary:active {
@@ -233,6 +235,7 @@ input:focus {
   cursor: pointer;
   transition: all 0.2s;
   color: var(--text-main);
+  will-change: transform, background-color;
 }
 
 .participant-badge.active {
@@ -268,6 +271,7 @@ input:focus {
 
 .history-item-hover {
   transition: all 0.2s ease;
+  will-change: transform, opacity;
 }
 
 .history-item-hover:active {
