@@ -7,6 +7,7 @@ import {
   Trash2,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   QrCode,
   CheckCircle2,
   Receipt,
@@ -19,7 +20,8 @@ import {
   Sun,
   Moon,
   Save,
-  Share2
+  Share2,
+  Search
 } from 'lucide-react';
 
 // --- UTILS ---
@@ -51,12 +53,12 @@ const calculateDebts = (history) => {
           // This person owes me
           if (!debts[p.name]) debts[p.name] = { amount: 0, bills: [], id: p.id };
           debts[p.name].amount += amount;
-          debts[p.name].bills.push({ id: bill.id, place: bill.place, amount, date: bill.date });
+          debts[p.name].bills.push({ id: bill.id, place: bill.place, amount, date: bill.date, fullDate: bill.fullDate });
         } else if (p.id === 'me') {
           // I owe this payer
           if (!myDebts[payerName]) myDebts[payerName] = { amount: 0, bills: [], id: payerId };
           myDebts[payerName].amount += amount;
-          myDebts[payerName].bills.push({ id: bill.id, place: bill.place, amount, date: bill.date });
+          myDebts[payerName].bills.push({ id: bill.id, place: bill.place, amount, date: bill.date, fullDate: bill.fullDate });
         }
       }
     });
@@ -165,6 +167,7 @@ export default function App() {
   const [showDanaQRModal, setShowDanaQRModal] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [billPayerId, setBillPayerId] = useState(null);
+  const [showManualTaxSettings, setShowManualTaxSettings] = useState(false);
 
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('darkMode');
@@ -197,6 +200,7 @@ export default function App() {
   const [selectedHistory, setSelectedHistory] = useState(null);
   const [historyOriginStep, setHistoryOriginStep] = useState(0);
   const [showAddAccount, setShowAddAccount] = useState(false);
+  const [tempAccount, setTempAccount] = useState(null);
 
   useEffect(() => {
     localStorage.setItem('billHistory', JSON.stringify(history));
@@ -239,6 +243,7 @@ export default function App() {
     setStep(0);
     setCurrentSessionId(null);
     setBillPayerId(null);
+    setShowManualTaxSettings(false);
   };
 
   const saveDraft = (stayOnPage = false) => {
@@ -425,10 +430,10 @@ export default function App() {
   const goHome = () => {
     if (participants.length > 0 || items.length > 0) {
       showConfirm(
-        "Keluar Ke Awal?",
-        "Simpan progres saat ini sebagai draft agar bisa dilanjutkan nanti?",
+        "Keluar & Mulai Baru?",
+        "Simpan progres saat ini sebagai draft agar bisa dilanjutkan nanti dan mulai patungan baru?",
         () => saveDraft(),
-        "Simpan Draft",
+        "Simpan & Buat Baru",
         () => resetSession(),
         "Hapus & Keluar"
       );
@@ -477,17 +482,24 @@ export default function App() {
   const addAccount = () => {
     if (newBank && newAcc) {
       let bankName = newBank.trim();
+      const upperName = bankName.toUpperCase();
 
-      // Auto-prefix BCA with "Bank"
-      if (bankName.toUpperCase() === 'BCA') {
-        bankName = 'Bank BCA';
-      } else if (bankName.toUpperCase().includes('JAGO')) {
-        bankName = 'JAGO';
-      } else if (bankName.toUpperCase().includes('DANA')) {
-        bankName = 'DANA';
+      const popularBanks = [
+        'BCA', 'BRI', 'MANDIRI', 'BNI', 'BSI', 'BTN', 'CIMB', 'CIMB NIAGA', 
+        'PERMATA', 'DANAMON', 'MAYBANK', 'OCBC', 'OCBC NISP', 'PANIN', 
+        'MEGA', 'SINARMAS', 'BUKOPIN', 'BTPN', 'HSBC', 'UOB', 'BJB', 'JATIM'
+      ];
+      const eWallets = ['DANA', 'OVO', 'GOPAY', 'SHOPEEPAY', 'LINKAJA', 'JAGO', 'SEABANK', 'BLU'];
+
+      if (popularBanks.includes(upperName)) {
+        bankName = `BANK ${upperName}`;
+      } else if (eWallets.includes(upperName)) {
+        bankName = upperName;
+      } else if (!upperName.startsWith('BANK ') && !eWallets.some(w => upperName.includes(w))) {
+        // If it's a name we don't recognize but doesn't start with BANK, and isn't a wallet, add BANK
+        bankName = `BANK ${upperName}`;
       } else {
-        // Just capitalize first letter of each word if it's not a known shorthand
-        bankName = bankName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        bankName = upperName;
       }
 
       setAccounts([...accounts, {
@@ -501,8 +513,26 @@ export default function App() {
       setNewAcc("");
       setNewAccName("");
       setNewLink("");
+      setTempAccount(null);
     }
   };
+
+  const handleCancelAccount = () => {
+    if (tempAccount) {
+      setAccounts(prev => {
+        // Only add back if it's not already there (safety check)
+        if (prev.some(a => a.id === tempAccount.id)) return prev;
+        return [...prev, tempAccount];
+      });
+      setTempAccount(null);
+    }
+    setNewBank("");
+    setNewAcc("");
+    setNewAccName("");
+    setNewLink("");
+    setShowAddAccount(false);
+  };
+
 
   const removeAccount = (id) => {
     const acc = accounts.find(a => a.id === id);
@@ -850,7 +880,12 @@ export default function App() {
   };
 
   const nextStep = () => setStep(s => s + 1);
-  const prevStep = () => setStep(s => s - 1);
+  const prevStep = () => {
+    if (step === 99) setStep(historyOriginStep);
+    else if (step === 100 || step === 101) setStep(0);
+    else if (step === 3 && !selectedEstablishmentId) setStep(2);
+    else if (step > 0) setStep(s => s - 1);
+  };
 
   const screenVariants = {
     initial: { x: 300, opacity: 0 },
@@ -859,6 +894,12 @@ export default function App() {
   };
 
   const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    if (!showSettings && tempAccount) {
+      handleCancelAccount();
+    }
+  }, [showSettings]);
 
   const isAllPaid = participants.length > 0 && participants.every(p =>
     p.id === billPayerId ||
@@ -965,7 +1006,7 @@ export default function App() {
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '16px', background: 'var(--input-bg)', borderRadius: '20px', border: '1px dashed var(--border)' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '4px' }}>
                             <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Input Data Baru</span>
-                            <button onClick={() => setShowAddAccount(false)} style={{ border: 'none', background: 'none', color: '#ff4444', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Batal</button>
+                            <button onClick={handleCancelAccount} style={{ border: 'none', background: 'none', color: '#ff4444', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Batal</button>
                           </div>
                           <input
                             value={newBank}
@@ -977,6 +1018,23 @@ export default function App() {
                               outline: 'none', fontSize: '13px', color: 'var(--text-main)'
                             }}
                           />
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '4px', width: '100%' }}>
+                            {['BCA', 'BRI', 'MANDIRI', 'BNI', 'BSI', 'CIMB', 'OCBC', 'PERMATA', 'JAGO', 'DANA', 'OVO', 'GOPAY', 'SHOPEEPAY'].map(bank => (
+                              <div
+                                key={bank}
+                                onClick={() => setNewBank(bank)}
+                                style={{
+                                  fontSize: '10px', fontWeight: 800, padding: '6px 10px', borderRadius: '10px',
+                                  background: newBank.toUpperCase() === bank ? 'var(--btn-primary-bg)' : 'var(--border)',
+                                  color: newBank.toUpperCase() === bank ? 'var(--btn-primary-text)' : 'var(--text-muted)',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s'
+                                }}
+                              >
+                                {bank}
+                              </div>
+                            ))}
+                          </div>
                           <input
                             value={newAcc}
                             onChange={(e) => setNewAcc(e.target.value)}
@@ -1076,18 +1134,22 @@ export default function App() {
                               <button
                                 onClick={() => {
                                   showConfirm(
-                                    "Hapus Akun?",
-                                    `Hapus info ${acc.bank} ini? Data akan dipindahkan ke kolom input untuk diedit.`,
+                                    "Ubah Data Akun?",
+                                    `Pindahkan data ${acc.bank} ke form input untuk diubah?`,
                                     () => {
+                                      if (tempAccount) {
+                                        setAccounts(prev => [...prev, tempAccount]);
+                                      }
+                                      setTempAccount(acc);
                                       setNewBank(acc.bank);
                                       setNewAcc(acc.number);
                                       setNewAccName(acc.name || "");
                                       setNewLink(acc.link || "");
                                       setShowAddAccount(true);
-                                      setAccounts(accounts.filter(a => a.id !== acc.id));
-                                      showToast(`${acc.bank} berhasil dihapus!`);
+                                      setAccounts(prev => prev.filter(a => a.id !== acc.id));
+                                      showToast("Data dipindahkan ke input!");
                                     },
-                                    "Ya, Edit"
+                                    "Ya, Ubah"
                                   );
                                 }}
                                 style={{ border: 'none', background: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
@@ -1114,11 +1176,43 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <AnimatePresence mode="wait">
+      {step !== 0 && (
+        <div style={{
+          padding: '20px 24px 16px',
+          background: 'var(--bg-container)',
+          position: 'relative',
+          zIndex: 100,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <button onClick={prevStep} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'block' }}>
+              <ChevronLeft size={24} color="var(--text-main)" />
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
+                {darkMode ? <Sun size={24} /> : <Moon size={24} />}
+              </button>
+              {step > 0 && step < 99 && (
+                <button onClick={() => saveDraft(true)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }} title="Simpan Draft">
+                  <Save size={24} />
+                </button>
+              )}
+              <button
+                onClick={goHome}
+                style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}
+              >
+                <Home size={24} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="screens-container">
+        <AnimatePresence mode="wait">
         {/* STEP 0: WELCOME SCREEN */}
         {step === 0 && (
-          <motion.div key="step0" className="screen" {...screenVariants} style={{ justifyContent: 'flex-start', alignItems: 'center', textAlign: 'center', overflowY: 'auto', paddingBottom: '40px' }}>
-            <div style={{ position: 'absolute', top: '24px', right: '24px' }}>
+          <motion.div key="step0" className="screen" {...screenVariants} style={{ justifyContent: 'flex-start', alignItems: 'center', textAlign: 'center', overflowY: 'auto', paddingBottom: '40px', paddingTop: '24px' }}>
+            <div style={{ position: 'absolute', top: '24px', right: '24px', zIndex: 10 }}>
               <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
                 {darkMode ? <Sun size={24} /> : <Moon size={24} />}
               </button>
@@ -1195,8 +1289,12 @@ export default function App() {
                   <Receipt size={24} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 800, fontSize: '16px', color: 'var(--text-main)' }}>Riwayat Transaksi</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{history.length} catatan tersimpan</div>
+                  <div style={{ fontWeight: 800, fontSize: '16px', color: 'var(--text-main)' }}>Riwayat & Draft</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', gap: '4px', alignItems: 'center' }}>
+                    <span>{history.filter(h => h.isDraft).length} Draft</span>
+                    <span style={{ opacity: 0.5 }}>•</span>
+                    <span>{history.filter(h => !h.isDraft).length} Riwayat tersimpan</span>
+                  </div>
                 </div>
                 <ChevronRight size={20} color="var(--text-muted)" />
               </div>
@@ -1212,7 +1310,7 @@ export default function App() {
                 fontWeight: 600,
                 opacity: 0.7
               }}>
-                venky arisko • Versi 1.1
+                venky arisko • Versi 1.2
               </div>
               <button className="btn-primary" onClick={nextStep} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
                 Mulai Patungan <Plus size={20} />
@@ -1232,22 +1330,7 @@ export default function App() {
         {step === 1 && (
           <motion.div key="step1" className="screen" {...screenVariants}>
             <div className="header">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <button onClick={prevStep} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'block' }}>
-                  <ChevronLeft size={24} color="var(--text-main)" />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    {darkMode ? <Sun size={24} /> : <Moon size={24} />}
-                  </button>
-                  <button onClick={() => saveDraft(true)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }} title="Simpan Draft">
-                    <Save size={24} />
-                  </button>
-                  <button onClick={goHome} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    <Home size={24} />
-                  </button>
-                </div>
-              </div>
+              {/* Global nav handles the back/darkmode/save/home buttons */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h1>Siapa saja?</h1>
@@ -1502,25 +1585,7 @@ export default function App() {
         {step === 2 && (
           <motion.div key="step2" className="screen" {...screenVariants}>
             <div className="header">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <button onClick={() => setStep(1)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'block' }}>
-                  <ChevronLeft size={24} color="var(--text-main)" />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    {darkMode ? <Sun size={24} /> : <Moon size={24} />}
-                  </button>
-                  <button onClick={() => saveDraft(true)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }} title="Simpan Draft">
-                    <Save size={24} />
-                  </button>
-                  <button
-                    onClick={goHome}
-                    style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}
-                  >
-                    <Home size={24} />
-                  </button>
-                </div>
-              </div>
+              {/* Global nav handles the buttons */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h1>Makan di mana?</h1>
@@ -1553,13 +1618,16 @@ export default function App() {
                 </button>
               </div>
 
-              {establishments.length > 5 && (
-                <div style={{ marginBottom: '16px' }}>
+              {establishments.length > 0 && (
+                <div className="input-group" style={{ marginBottom: '16px', position: 'relative' }}>
+                  <div style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
+                    <Search size={18} />
+                  </div>
                   <input
-                    placeholder="Cari tempat makan..."
+                    placeholder="Cari warung favoritmu..."
                     onChange={(e) => setEstSearch(e.target.value)}
                     value={estSearch}
-                    style={{ padding: '10px 14px', fontSize: '14px', borderRadius: '12px', border: '1px solid var(--border)' }}
+                    style={{ paddingLeft: '44px', height: '48px' }}
                   />
                 </div>
               )}
@@ -1754,6 +1822,8 @@ export default function App() {
               <button
                 onClick={() => {
                   setSelectedEstablishmentId(null);
+                  setTax(0); // Default pajak manual
+                  setService(0); // Default service manual
                   setStep(3);
                 }}
                 style={{
@@ -1776,25 +1846,7 @@ export default function App() {
         {step === 3 && (
           <motion.div key="step3" className="screen" {...screenVariants}>
             <div className="header">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <button onClick={() => setStep(2)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'block' }}>
-                  <ChevronLeft size={24} color="var(--text-main)" />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    {darkMode ? <Sun size={24} /> : <Moon size={24} />}
-                  </button>
-                  <button onClick={() => saveDraft(true)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }} title="Simpan Draft">
-                    <Save size={24} />
-                  </button>
-                  <button
-                    onClick={goHome}
-                    style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}
-                  >
-                    <Home size={24} />
-                  </button>
-                </div>
-              </div>
+              {/* Global nav handles the buttons */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h1>Menu Struk</h1>
@@ -2063,7 +2115,7 @@ export default function App() {
                   </button>
                 </div>
               )}
-              {(tax > 0 || service > 0) && (
+              {(!selectedEstablishmentId || tax > 0 || service > 0) && (
                 <div style={{
                   fontSize: '12px',
                   color: 'var(--text-main)',
@@ -2072,14 +2124,65 @@ export default function App() {
                   background: 'var(--input-bg)',
                   padding: '10px',
                   borderRadius: '12px',
-                  fontWeight: 500,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '6px'
+                  fontWeight: 500
                 }}>
-                  <Info size={14} />
-                  Sudah termasuk: {tax > 0 ? `Pajak ${tax}%` : ''} {tax > 0 && service > 0 ? '&' : ''} {service > 0 ? `Service ${service}%` : ''}
+                  <div
+                    onClick={() => !selectedEstablishmentId && setShowManualTaxSettings(!showManualTaxSettings)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      marginBottom: (!selectedEstablishmentId && showManualTaxSettings) ? '8px' : '0',
+                      cursor: !selectedEstablishmentId ? 'pointer' : 'default',
+                      padding: '4px'
+                    }}
+                  >
+                    <Info size={14} />
+                    <span>
+                      {selectedEstablishmentId ? 'Sudah termasuk: ' : 'Atur Tambahan: '}
+                      {tax > 0 ? `Pajak ${tax}%` : ''} {tax > 0 && service > 0 ? '&' : ''} {service > 0 ? `Service ${service}%` : ''}
+                      {(tax === 0 && service === 0) && 'Tanpa Pajak/Service'}
+                    </span>
+                    {!selectedEstablishmentId && (
+                      <motion.div
+                        animate={{ rotate: showManualTaxSettings ? 180 : 0 }}
+                        style={{ display: 'flex', alignItems: 'center' }}
+                      >
+                        <ChevronDown size={14} />
+                      </motion.div>
+                    )}
+                  </div>
+
+                  {!selectedEstablishmentId && showManualTaxSettings && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      style={{ display: 'flex', gap: '8px', overflow: 'hidden' }}
+                    >
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', background: 'var(--bg-container)', borderRadius: '8px', padding: '4px 12px', border: '1px solid var(--border)' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 800, marginRight: '8px' }}>PAJAK</span>
+                        <input
+                          type="number"
+                          value={tax}
+                          onChange={(e) => setTax(parseFloat(e.target.value) || 0)}
+                          style={{ width: '100%', border: 'none', background: 'transparent', fontSize: '13px', fontWeight: 700, color: 'var(--text-main)', outline: 'none' }}
+                        />
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>%</span>
+                      </div>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', background: 'var(--bg-container)', borderRadius: '8px', padding: '4px 12px', border: '1px solid var(--border)' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 800, marginRight: '8px' }}>SERVICE</span>
+                        <input
+                          type="number"
+                          value={service}
+                          onChange={(e) => setService(parseFloat(e.target.value) || 0)}
+                          style={{ width: '100%', border: 'none', background: 'transparent', fontSize: '13px', fontWeight: 700, color: 'var(--text-main)', outline: 'none' }}
+                        />
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>%</span>
+                      </div>
+                    </motion.div>
+                  )}
                 </div>
               )}
               <button className="btn-primary" onClick={() => setStep(4)} disabled={items.length === 0}>
@@ -2093,25 +2196,7 @@ export default function App() {
         {step === 4 && (
           <motion.div key="step4" className="screen" {...screenVariants}>
             <div className="header">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <button onClick={() => setStep(3)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'block' }}>
-                  <ChevronLeft size={24} color="var(--text-main)" />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    {darkMode ? <Sun size={24} /> : <Moon size={24} />}
-                  </button>
-                  <button onClick={() => saveDraft(true)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }} title="Simpan Draft">
-                    <Save size={24} />
-                  </button>
-                  <button
-                    onClick={goHome}
-                    style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}
-                  >
-                    <Home size={24} />
-                  </button>
-                </div>
-              </div>
+              {/* Global nav handles the buttons */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h1>Siapa makan apa?</h1>
@@ -2214,25 +2299,7 @@ export default function App() {
         {step === 5 && (
           <motion.div key="step5" className="screen" {...screenVariants}>
             <div className="header">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <button onClick={() => setStep(4)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'block' }}>
-                  <ChevronLeft size={24} color="var(--text-main)" />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    {darkMode ? <Sun size={24} /> : <Moon size={24} />}
-                  </button>
-                  <button onClick={() => saveDraft(true)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }} title="Simpan Draft">
-                    <Save size={24} />
-                  </button>
-                  <button
-                    onClick={goHome}
-                    style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}
-                  >
-                    <Home size={24} />
-                  </button>
-                </div>
-              </div>
+              {/* Global nav handles the buttons */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h1>Tagihan Teman</h1>
@@ -2390,25 +2457,7 @@ export default function App() {
         {step === 6 && (
           <motion.div key="step6" className="screen" {...screenVariants}>
             <div className="header">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <button onClick={() => setStep(5)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'block' }}>
-                  <ChevronLeft size={24} color="var(--text-main)" />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    {darkMode ? <Sun size={24} /> : <Moon size={24} />}
-                  </button>
-                  <button onClick={() => saveDraft(true)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }} title="Simpan Draft">
-                    <Save size={24} />
-                  </button>
-                  <button
-                    onClick={goHome}
-                    style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}
-                  >
-                    <Home size={24} />
-                  </button>
-                </div>
-              </div>
+              {/* Global nav handles the buttons */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h1>Detail Pembayaran</h1>
@@ -2628,23 +2677,11 @@ export default function App() {
         {step === 99 && selectedHistory && (
           <motion.div key="step99" className="screen" {...screenVariants}>
             <div className="header">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <button onClick={() => setStep(historyOriginStep)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'block' }}>
-                  <ChevronLeft size={24} color="var(--text-main)" />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    {darkMode ? <Sun size={24} /> : <Moon size={24} />}
-                  </button>
-                  <button onClick={() => setStep(0)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    <Home size={24} />
-                  </button>
-                </div>
-              </div>
+              {/* Global nav handles the buttons */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h1 style={{ fontSize: '24px' }}>Detail Riwayat</h1>
-                  <p style={{ fontSize: '13px' }}>{selectedHistory.fullDate || selectedHistory.date}</p>
+                  <p style={{ fontSize: '13px' }}>{selectedHistory.fullDate ? selectedHistory.fullDate.replace(/ (\d{2}[:.]\d{2})/, ' | $1') : selectedHistory.date}</p>
                 </div>
               </div>
             </div>
@@ -2829,19 +2866,7 @@ export default function App() {
           return (
             <motion.div key="step101" className="screen" {...screenVariants} style={{ background: 'var(--bg-body)' }}>
               <div className="header" style={{ paddingBottom: '32px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                  <button onClick={() => setStep(0)} style={{ border: 'none', background: 'var(--card-bg)', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-main)', boxShadow: '0 4px 12px var(--shadow)' }}>
-                    <ChevronLeft size={20} />
-                  </button>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'var(--card-bg)', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-main)', boxShadow: '0 4px 12px var(--shadow)' }}>
-                      {darkMode ? <Sun size={20} /> : <Moon size={20} />}
-                    </button>
-                    <button onClick={() => setStep(0)} style={{ border: 'none', background: 'var(--card-bg)', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-main)', boxShadow: '0 4px 12px var(--shadow)' }}>
-                      <Home size={20} />
-                    </button>
-                  </div>
-                </div>
+                {/* Global nav handles the buttons */}
                 <h1 style={{ fontSize: '28px', fontWeight: 900, letterSpacing: '-0.5px', marginBottom: '8px' }}>Dashboard</h1>
                 <p style={{ fontSize: '14px', color: 'var(--text-secondary)', fontWeight: 500 }}>Kelola hutang/piutang dan tagihan teman dengan mudah.</p>
               </div>
@@ -2914,6 +2939,9 @@ export default function App() {
                         </div>
                       </div>
 
+                      {/* Divider */}
+                      <div style={{ height: '1px', background: 'var(--border)', margin: '0 0 20px 0' }}></div>
+
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {data.bills.map(bill => (
                           <div
@@ -2933,10 +2961,12 @@ export default function App() {
                               border: '1px solid transparent'
                             }}
                           >
-                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                              <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-main)' }}>{bill.place}</span>
-                              <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: 500 }}>{bill.date}</span>
-                            </div>
+                              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-main)' }}>{bill.place}</span>
+                                <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                  {bill.fullDate ? bill.fullDate.replace(/ (\d{2}[:.]\d{2})/, ' | $1') : bill.date}
+                                </span>
+                              </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span style={{ fontWeight: 800, fontSize: '13px', color: 'var(--text-main)' }}>{formatIDR(bill.amount)}</span>
                               <ChevronRight size={14} color="var(--text-muted)" />
@@ -2985,6 +3015,9 @@ export default function App() {
                             </div>
                           </div>
 
+                          {/* Divider */}
+                          <div style={{ height: '1px', background: 'var(--border)', margin: '0 0 20px 0' }}></div>
+
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             {data.bills.map(bill => (
                               <div
@@ -3006,7 +3039,9 @@ export default function App() {
                               >
                                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                                   <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-main)' }}>{bill.place}</span>
-                                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: 500 }}>{bill.date}</span>
+                                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                    {bill.fullDate ? bill.fullDate.replace(/ (\d{2}[:.]\d{2})/, ' | $1') : bill.date}
+                                  </span>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                   <span style={{ fontWeight: 800, fontSize: '13px', color: 'var(--text-main)' }}>{formatIDR(bill.amount)}</span>
@@ -3035,19 +3070,7 @@ export default function App() {
         {step === 100 && (
           <motion.div key="step100" className="screen" {...screenVariants}>
             <div className="header">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <button onClick={() => setStep(0)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'block' }}>
-                  <ChevronLeft size={24} color="var(--text-main)" />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button onClick={() => setDarkMode(!darkMode)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    {darkMode ? <Sun size={24} /> : <Moon size={24} />}
-                  </button>
-                  <button onClick={() => setStep(0)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-main)' }}>
-                    <Home size={24} />
-                  </button>
-                </div>
-              </div>
+              {/* Global nav handles the buttons */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h1 style={{ fontSize: '24px' }}>Semua Riwayat</h1>
@@ -3119,14 +3142,16 @@ export default function App() {
                           return '';
                         })()}
                       </div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{item.fullDate || item.date} • {item.count} Orang</div>
-                      <div style={{ 
-                        fontWeight: 800, 
-                        color: item.isDraft 
-                          ? '#eab308' 
-                          : (item.paidStatus?.some(ps => ps.method === 'LENT') ? '#ef4444' : '#22c55e'), 
-                        fontSize: '14px', 
-                        marginTop: '6px' 
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        {item.fullDate ? item.fullDate.replace(/ (\d{2}[:.]\d{2})/, ' | $1') : item.date} • {item.count} Orang
+                      </div>
+                      <div style={{
+                        fontWeight: 800,
+                        color: item.isDraft
+                          ? '#eab308'
+                          : (item.paidStatus?.some(ps => ps.method === 'LENT') ? '#ef4444' : '#22c55e'),
+                        fontSize: '14px',
+                        marginTop: '6px'
                       }}>
                         {formatIDR(item.total)}
                       </div>
@@ -3161,6 +3186,7 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
 
       {/* Custom Confirm Modal - Rendered last to be on top */}
       <AnimatePresence>
