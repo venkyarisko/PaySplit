@@ -16,13 +16,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            storeFile file("paysplit-key.jks")
+            storePassword System.getenv("SIGNING_STORE_PASSWORD") ?: "123456"
+            keyAlias System.getenv("SIGNING_KEY_ALIAS") ?: "paysplit-alias"
+            keyPassword System.getenv("SIGNING_KEY_PASSWORD") ?: "123456"
+        }
+    }
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
 }
+
 
 repositories {
     flatDir{
